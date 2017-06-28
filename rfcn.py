@@ -14,7 +14,7 @@ class RegionBasedFCN(nn.Module):
         self.rpn = RegionProposalNet(self.k, self.c)
 
         # Initialize layers
-        self.avg_pool = nn.AvgPool3d(self.rpn.k)
+        self.avg_pool = nn.AvgPool3d(self.k)
         self.cls_vote = nn.Softmax2d()
 
     def forward(self, x, batch_size=8):
@@ -22,18 +22,17 @@ class RegionBasedFCN(nn.Module):
         # Get region proposals
         x_cls, x_reg = self.rpn(x)
 
-        # Position-sensitive pooling of maps
-        x_cls = self.pos_sensitive_roi_pool(x_cls, batch_size)
+        # Class voting
+        x_cls = self.pos_sensitive_roi_pool(x_cls, self.c + 1, self.k, batch_size)
         x_cls = self.cls_vote(x_cls.squeeze(-1))
 
         # Box regression
-        x_reg = self.pos_sensitive_roi_pool(x_reg, batch_size)
-        x_reg = self.avg_pool(x_reg)
+        x_reg = self.pos_sensitive_roi_pool(x_reg.squeeze(-1).squeeze(-1), 4, self.k, batch_size)
 
         return x_cls, x_reg
 
-    def pos_sensitive_roi_pool(self, x, batch_size):
-        x = x.view(batch_size, self.c + 1, -1, self.k, self.k)
+    def pos_sensitive_roi_pool(self, x, num_maps, kernel_size, batch_size, kind):
+        x = x.view(batch_size, num_maps, -1, kernel_size, kernel_size)
         return self.avg_pool(x)
 
 
@@ -50,9 +49,9 @@ class RegionProposalNet(nn.Module):
         self.backbone_layers = ['conv1', 'bn1', 'relu', 'maxpool', 'layer1', 'layer2', 'layer3', 'layer4']
 
         # Regional proposal layers
-        self.reduce_dim = nn.Conv2d(in_channels=2048, out_channels=1024, kernel_size=1)
-        self.slide_cls = nn.Conv2d(in_channels=1024, out_channels=self.c + 1, kernel_size=self.k)
-        self.slide_reg = nn.Conv2d(in_channels=self.c + 1, out_channels=4, kernel_size=self.k)
+        self.reduce_dim = nn.Conv2d(2048, 1024, kernel_size=1, padding=(1, 1))
+        self.slide_cls = nn.Conv2d(1024, self.c + 1, kernel_size=self.k, padding=(1, 1))
+        self.slide_reg = nn.Conv2d(1024, 4, kernel_size=self.k, padding=(1, 1))
 
     def forward(self, x):
         # Compute feature maps to slide over
